@@ -1,0 +1,16 @@
+[package]
+name = "wireguard-wfp-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Windows Filtering Platform (WFP) session, transaction, provider and sublayer engine for WireGuard"
+
+[dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true }

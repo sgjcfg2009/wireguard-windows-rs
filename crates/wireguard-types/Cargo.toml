@@ -1,0 +1,16 @@
+[package]
+name = "wireguard-types"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+base64.workspace = true
+x25519-dalek = { workspace = true, default-features = false }
+subtle.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

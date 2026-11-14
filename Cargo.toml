@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wireguard-types",
+    "crates/wireguard-ringlog",
+    "crates/wireguard-dpapi",
+    "crates/wireguard-conf",
+    "crates/wireguard-version",
+    "crates/wireguard-memmod",
+    "crates/wireguard-driver",
+    "crates/wireguard-ipcfg-core",
+    "crates/wireguard-ipcfg-routes",
+    "crates/wireguard-ipcfg-dns",
+    "crates/wireguard-wfp-engine",
+    "crates/wireguard-wfp-rules",
+    "crates/wireguard-elevate",
+    "crates/wireguard-service",
+    "crates/wireguard-tunnel",
+    "crates/wireguard-ipc",
+    "crates/wireguard-wts",
+    "crates/wireguard-dll",
+    "crates/wireguard-manager",
+    "crates/wireguard-ui",
+    "crates/wireguard-cli",
+]
+
+[workspace.package]
+version = "0.5.3"
+edition = "2021"
+authors = ["WireGuard Rust Contributors"]
+license = "MIT"
+
+[workspace.dependencies]
+windows-sys = { version = "0.59.0" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+x25519-dalek = { version = "2.0", default-features = false }
+base64 = "0.22"
+subtle = "2.5"
+memmap2 = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+

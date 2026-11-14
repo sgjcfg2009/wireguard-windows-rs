@@ -1,0 +1,16 @@
+[package]
+name = "wireguard-ipcfg-routes"
+description = "Win32 IP Helper unicast IP address and IPv4/IPv6 routing table management for WireGuard"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+wireguard-ipcfg-core = { path = "../wireguard-ipcfg-core" }
+thiserror = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+] }

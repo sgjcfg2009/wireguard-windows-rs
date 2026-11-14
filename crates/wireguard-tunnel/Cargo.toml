@@ -1,0 +1,24 @@
+[package]
+name = "wireguard-tunnel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Tunnel service engine coordinating adapter lifecycle, IP helper, firewall rules, and state machine"
+
+[dependencies]
+wireguard-conf = { path = "../wireguard-conf" }
+wireguard-driver = { path = "../wireguard-driver" }
+wireguard-ipcfg-core = { path = "../wireguard-ipcfg-core" }
+wireguard-ipcfg-routes = { path = "../wireguard-ipcfg-routes" }
+wireguard-ipcfg-dns = { path = "../wireguard-ipcfg-dns" }
+wireguard-wfp-rules = { path = "../wireguard-wfp-rules" }
+wireguard-ringlog = { path = "../wireguard-ringlog" }
+wireguard-service = { path = "../wireguard-service" }
+wireguard-elevate = { path = "../wireguard-elevate" }
+wireguard-dpapi = { path = "../wireguard-dpapi" }
+windows-sys = { workspace = true, features = [
+    "Win32_System_Services",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "wireguard-conf"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "WireGuard configuration file parser, serializer, and migration utilities"
+
+[dependencies]
+wireguard-types = { path = "../wireguard-types" }
+thiserror = { workspace = true }

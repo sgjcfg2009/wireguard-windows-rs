@@ -1,0 +1,25 @@
+[package]
+name = "wireguard-manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "WireGuard Windows Manager Service daemon and IPC coordinator in 100% Rust"
+
+[dependencies]
+wireguard-types = { path = "../wireguard-types" }
+wireguard-conf = { path = "../wireguard-conf" }
+wireguard-dpapi = { path = "../wireguard-dpapi" }
+wireguard-service = { path = "../wireguard-service" }
+
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Services",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true }

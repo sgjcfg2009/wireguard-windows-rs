@@ -1,0 +1,17 @@
+[package]
+name = "wireguard-ipcfg-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Win32 IP Helper LUID, GUID, and network interface management for WireGuard Windows"
+
+[dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_System_Diagnostics_Debug",
+] }
+thiserror = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "wireguard-wts"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_RemoteDesktop",
+] }
+thiserror = { workspace = true }

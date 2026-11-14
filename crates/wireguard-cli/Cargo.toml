@@ -1,0 +1,32 @@
+[package]
+name = "wireguard-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface and Windows service launcher for WireGuard Windows (wireguard.exe)"
+
+[[bin]]
+name = "wireguard"
+path = "src/main.rs"
+
+[dependencies]
+wireguard-types = { path = "../wireguard-types" }
+wireguard-conf = { path = "../wireguard-conf" }
+wireguard-service = { path = "../wireguard-service" }
+wireguard-tunnel = { path = "../wireguard-tunnel" }
+wireguard-manager = { path = "../wireguard-manager" }
+wireguard-ringlog = { path = "../wireguard-ringlog" }
+wireguard-version = { path = "../wireguard-version" }
+wireguard-elevate = { path = "../wireguard-elevate" }
+wireguard-driver = { path = "../wireguard-driver" }
+wireguard-ui = { path = "../wireguard-ui" }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true }

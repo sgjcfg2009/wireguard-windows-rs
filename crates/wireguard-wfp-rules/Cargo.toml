@@ -1,0 +1,12 @@
+[package]
+name = "wireguard-wfp-rules"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Windows Filtering Platform (WFP) kill-switch, permit rules, and DNS leak prevention for WireGuard"
+
+[dependencies]
+wireguard-wfp-engine = { path = "../wireguard-wfp-engine" }
+thiserror = { workspace = true }
+tracing = { workspace = true }

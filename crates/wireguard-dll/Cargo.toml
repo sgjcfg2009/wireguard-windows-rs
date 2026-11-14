@@ -1,0 +1,20 @@
+[package]
+name = "wireguard-dll"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Embeddable C ABI dynamic library (tunnel.dll / wireguard.dll) for WireGuard Windows"
+
+[lib]
+name = "wireguard_dll"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wireguard-tunnel = { path = "../wireguard-tunnel" }
+wireguard-types = { path = "../wireguard-types" }
+wireguard-ringlog = { path = "../wireguard-ringlog" }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+] }
+tracing = { workspace = true }
