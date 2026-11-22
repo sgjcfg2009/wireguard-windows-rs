@@ -35,7 +35,8 @@ use windows_sys::Win32::System::Services::{
 use windows_sys::Win32::UI::Controls::NMHDR;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, GetClientRect,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    GetClientRect,
     GetParent, GetWindowLongPtrW, MessageBoxW, MoveWindow, PeekMessageW, PostMessageW,
     RegisterClassExW, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
     TrackPopupMenu, BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, IDYES, MB_DEFBUTTON2,
@@ -425,8 +426,24 @@ impl TunnelsPage {
 
         log_to_file("TunnelsPage::new(): creating TunnelListView...");
         // 1. Create Left Pane: Tunnel List View
-        let list_view = TunnelListView::new(hwnd, 5, 5, 205, height - 44)
-            .map_err(UiError::Control)?;
+        let list_view = match TunnelListView::new(hwnd, 5, 5, 205, height - 44) {
+            Ok(lv) => lv,
+            Err(e) => {
+                unsafe {
+                    if !font.is_null() {
+                        DeleteObject(font as HGDIOBJ);
+                    }
+                    if !font_bold.is_null() {
+                        DeleteObject(font_bold as HGDIOBJ);
+                    }
+                    if !font_large.is_null() {
+                        DeleteObject(font_large as HGDIOBJ);
+                    }
+                    DestroyWindow(hwnd);
+                }
+                return Err(UiError::Control(e));
+            }
+        };
         log_to_file("TunnelsPage::new(): TunnelListView created");
 
         let labels = details_labels();
@@ -772,6 +789,60 @@ fn query_tunnel_service_state_wide(scm: Option<&ScmHandle>, svc_name_wide: &[u16
 /// Queries the current Windows Service state for `WireGuardTunnel$<name>` using a stack buffer.
 fn query_tunnel_service_state(scm: Option<&ScmHandle>, name: &str) -> TunnelState {
     with_tunnel_service_name_wide(name, |ptr| query_tunnel_service_state_ptr(scm, ptr))
+}
+
+/// Stops a tunnel's Windows service, optionally waiting for `SERVICE_STOPPED`,
+/// removes it from autostart if stopped, and returns whether it is still active.
+fn deactivate_tunnel_service(tunnel_name: &str, svc_name: &str, wait_for_stop: bool) -> bool {
+    if let Ok(scm) = ScmHandle::open(SC_MANAGER_ALL_ACCESS) {
+        if let Ok(svc) = scm.open_service(svc_name, SERVICE_ALL_ACCESS) {
+            // Set start type to DEMAND_START (0x00000003) and stop the service in-place
+            // instead of deleting it, avoiding Win32 error 1072 (ERROR_SERVICE_MARKED_FOR_DELETE).
+            let _ = svc.set_start_type(0x00000003 /* SERVICE_DEMAND_START */);
+            let _ = svc.stop_service();
+            if wait_for_stop {
+                let st = query_tunnel_service_state(Some(&scm), tunnel_name);
+                if st != TunnelState::Stopped {
+                    let _ = wireguard_service::wait_service_status_change(
+                        svc_name,
+                        SERVICE_NOTIFY_STOPPED,
+                        None,
+                        Some(5_000),
+                    );
+                }
+            }
+        }
+    } else if !wireguard_elevate::is_current_process_elevated() {
+        if let Ok(exe) = std::env::current_exe() {
+            let args = format!("/uninstalltunnelservice \"{tunnel_name}\"");
+            if wireguard_elevate::shell_execute_runas(
+                &exe.to_string_lossy(),
+                &args,
+                None,
+                SW_HIDE as i32,
+            )
+            .is_ok()
+            {
+                let timeout_ms = if wait_for_stop { 5_000 } else { 2_000 };
+                let _ = wireguard_service::wait_service_status_change(
+                    svc_name,
+                    SERVICE_NOTIFY_STOPPED,
+                    None,
+                    Some(timeout_ms),
+                );
+            }
+        }
+    }
+
+    let st = query_tunnel_service_state(None, tunnel_name);
+    let still_active = st == TunnelState::Started || st == TunnelState::Starting;
+
+    if !still_active {
+        let _ = wireguard_manager::autostart::remove_autostart_tunnel(tunnel_name);
+        log_to_file(&format!("Tunnel '{}' deactivated", tunnel_name));
+    }
+
+    still_active
 }
 
 impl TunnelsPageInner {
@@ -1491,41 +1562,7 @@ impl TunnelsPageInner {
             });
 
             std::thread::spawn(move || {
-                if let Ok(scm) = ScmHandle::open(SC_MANAGER_ALL_ACCESS) {
-                    if let Ok(svc) = scm.open_service(&svc_name, SERVICE_ALL_ACCESS) {
-                        // Set start type to DEMAND_START (0x00000003) and stop the service in-place
-                        // instead of deleting it, avoiding Win32 error 1072 (ERROR_SERVICE_MARKED_FOR_DELETE).
-                        let _ = svc.set_start_type(0x00000003 /* SERVICE_DEMAND_START */);
-                        let _ = svc.stop_service();
-                    }
-                } else if !wireguard_elevate::is_current_process_elevated() {
-                    if let Ok(exe) = std::env::current_exe() {
-                        let args = format!("/uninstalltunnelservice \"{tunnel_name}\"");
-                        if wireguard_elevate::shell_execute_runas(
-                            &exe.to_string_lossy(),
-                            &args,
-                            None,
-                            SW_HIDE as i32,
-                        )
-                        .is_ok()
-                        {
-                            let _ = wireguard_service::wait_service_status_change(
-                                &svc_name,
-                                SERVICE_NOTIFY_STOPPED,
-                                None,
-                                Some(2_000),
-                            );
-                        }
-                    }
-                }
-
-                let st = query_tunnel_service_state(None, &tunnel_name);
-                let still_active = st == TunnelState::Started || st == TunnelState::Starting;
-
-                if !still_active {
-                    let _ = wireguard_manager::autostart::remove_autostart_tunnel(&tunnel_name);
-                    log_to_file(&format!("Tunnel '{}' deactivated", tunnel_name));
-                }
+                let still_active = deactivate_tunnel_service(&tunnel_name, &svc_name, false);
 
                 let name_for_task = tunnel_name.clone();
                 post_tunnel_op_result(
@@ -1545,6 +1582,27 @@ impl TunnelsPageInner {
                 }
             });
         } else {
+            let other_active: Vec<String> = self
+                .list_view
+                .tunnels()
+                .iter()
+                .filter(|t| {
+                    t.name != tunnel_name
+                        && (t.state == TunnelState::Started || t.state == TunnelState::Starting)
+                })
+                .map(|t| t.name.clone())
+                .collect();
+
+            for other in &other_active {
+                log_to_file(&format!(
+                    "Deactivating active tunnel '{}' before activating '{}'...",
+                    other, tunnel_name
+                ));
+                self.pending_ops.insert(other.clone());
+                self.list_view
+                    .update_tunnel_state(other, TunnelState::Stopping);
+            }
+
             log_to_file(&format!(
                 "Activating tunnel '{}' (service '{}')...",
                 tunnel_name, svc_name
@@ -1554,8 +1612,62 @@ impl TunnelsPageInner {
             self.update_selection_state();
 
             let cached_cfg = self.config_cache.get(&tunnel_name).cloned();
+            let had_other_active = !other_active.is_empty();
 
             std::thread::spawn(move || {
+                let mut switch_err: Option<String> = None;
+                for other_name in other_active {
+                    let other_svc_name = match service_name_of_tunnel(&other_name) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let st = query_tunnel_service_state(None, &other_name);
+                            let still_active =
+                                st == TunnelState::Started || st == TunnelState::Starting;
+                            post_tunnel_op_result(
+                                target_hwnd,
+                                TunnelOpResult::Deactivated {
+                                    tunnel_name: other_name.clone(),
+                                    still_active,
+                                },
+                            );
+                            if still_active && switch_err.is_none() {
+                                switch_err = Some(format!(
+                                    "Invalid service name for active tunnel '{}': {}",
+                                    other_name, e
+                                ));
+                            }
+                            continue;
+                        }
+                    };
+
+                    let still_active =
+                        deactivate_tunnel_service(&other_name, &other_svc_name, true);
+                    post_tunnel_op_result(
+                        target_hwnd,
+                        TunnelOpResult::Deactivated {
+                            tunnel_name: other_name.clone(),
+                            still_active,
+                        },
+                    );
+                    if still_active && switch_err.is_none() {
+                        switch_err = Some(format!(
+                            "Could not deactivate active tunnel '{}' before activating '{}'",
+                            other_name, tunnel_name
+                        ));
+                    }
+                }
+
+                if let Some(err_msg) = switch_err {
+                    post_tunnel_op_result(
+                        target_hwnd,
+                        TunnelOpResult::Activated {
+                            tunnel_name,
+                            error: Some(err_msg),
+                        },
+                    );
+                    return;
+                }
+
                 let conf_dir = ConfigDir::resolve_data_directory(false)
                     .map(|root| root.join("Configurations"))
                     .unwrap_or_else(|_| {
@@ -1774,6 +1886,17 @@ impl TunnelsPageInner {
                                 0,
                             );
                         }
+                    }
+                } else if had_other_active {
+                    let any_autostart_left = wireguard_manager::autostart::get_autostart_tunnels()
+                        .map(|tunnels| !tunnels.is_empty())
+                        .unwrap_or(false);
+                    if !any_autostart_left {
+                        let _ = wireguard_manager::autostart::set_windows_logon_autostart(false);
+                        log_to_file(&format!(
+                            "Activation of '{}' failed after deactivating previous tunnel(s): Windows logon auto-start disabled",
+                            name_for_task
+                        ));
                     }
                 }
             });
@@ -2111,6 +2234,12 @@ unsafe extern "system" fn tunnels_page_wndproc(
                 if !inner_ptr.is_null() {
                     (*inner_ptr).handle_tunnel_op_done(*result);
                 }
+            }
+            0
+        }
+        WM_APP_SERVICE_STATE_CHANGED => {
+            if !inner_ptr.is_null() {
+                (*inner_ptr).poll_service_states();
             }
             0
         }

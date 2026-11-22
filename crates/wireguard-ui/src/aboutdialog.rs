@@ -27,7 +27,7 @@ use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, IsWindow, LoadCursorW,
-    RegisterClassExW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+    PostQuitMessage, RegisterClassExW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
     ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CS_HREDRAW,
     CS_VREDRAW, GWLP_USERDATA, IDC_ARROW, SM_CXSCREEN, SM_CYSCREEN,
     SW_SHOW, SW_SHOWNORMAL,
@@ -226,7 +226,14 @@ pub fn run_about_dialog(parent: HWND) {
     // Modal message loop
     unsafe {
         let mut msg = std::mem::zeroed();
-        while IsWindow(hwnd) != 0 && GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+        while IsWindow(hwnd) != 0 {
+            let ret = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
+            if ret <= 0 {
+                if ret == 0 {
+                    PostQuitMessage(msg.wParam as i32);
+                }
+                break;
+            }
             if msg.message == WM_KEYDOWN
                 && (msg.wParam == VK_ESCAPE as usize || msg.wParam == VK_RETURN as usize)
             {
@@ -492,8 +499,8 @@ unsafe extern "system" fn about_wnd_proc(
                 GetClientRect(hwnd, &mut rect);
                 let center_x = (rect.right - rect.left) / 2;
                 paint_wireguard_logo(hdc, center_x, 15);
-                EndPaint(hwnd, &ps);
             }
+            EndPaint(hwnd, &ps);
             0
         }
 

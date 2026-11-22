@@ -23,7 +23,7 @@ use std::sync::{Mutex, Once, OnceLock};
 use tracing::{info, warn};
 
 use windows_sys::Win32::Foundation::{
-    FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM,
+    GlobalFree, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     CreateFontW, DeleteObject, GetSysColorBrush, InvalidateRect, SetBkMode,
@@ -271,6 +271,9 @@ impl LogPage {
 
         if hwnd_list.is_null() {
             unsafe {
+                if !font.is_null() {
+                    DeleteObject(font);
+                }
                 DestroyWindow(hwnd_container);
             }
             return Err(LogPageError::Win32("Failed to create ListView control".into()));
@@ -807,7 +810,11 @@ fn copy_wide_to_clipboard(hwnd: HWND, wide: &[u16]) {
                 if !ptr.is_null() {
                     std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
                     GlobalUnlock(h_mem);
-                    SetClipboardData(CF_UNICODETEXT, h_mem as _);
+                    if SetClipboardData(CF_UNICODETEXT, h_mem as _).is_null() {
+                        GlobalFree(h_mem);
+                    }
+                } else {
+                    GlobalFree(h_mem);
                 }
             }
             CloseClipboard();

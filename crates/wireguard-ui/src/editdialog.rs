@@ -38,7 +38,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsDialogMessageW, IsWindow,
-    LoadCursorW, MessageBoxW, MoveWindow, RegisterClassExW, SendMessageW,
+    LoadCursorW, MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassExW, SendMessageW,
     SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
     TranslateMessage, BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX,
     BS_DEFPUSHBUTTON, BS_PUSHBUTTON, EN_CHANGE, ES_AUTOHSCROLL, ES_AUTOVSCROLL,
@@ -468,16 +468,37 @@ impl EditDialogState {
 
                 // Attempt saving to the manager's encrypted config directory under LocalSystem
                 let cfg_clone = config.clone();
-                let saved = wireguard_elevate::do_as_system(move || {
-                    if let Ok(dir) = wireguard_manager::ConfigDir::open_default() {
-                        let _ = dir.save_config(&cfg_clone, true);
+                let sys_saved = wireguard_elevate::do_as_system(move || {
+                    match wireguard_manager::ConfigDir::open_default() {
+                        Ok(dir) => match dir.save_config(&cfg_clone, true) {
+                            Ok(_) => Ok(Ok(())),
+                            Err(e) => Ok(Err(e.to_string())),
+                        },
+                        Err(e) => Ok(Err(e.to_string())),
                     }
-                    Ok(())
                 });
-                if saved.is_err() {
-                    if let Ok(dir) = wireguard_manager::ConfigDir::open_default() {
-                        let _ = dir.save_config(&config, true);
+                let mut save_err: Option<String> = match sys_saved {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(e),
+                    Err(e) => Some(e.to_string()),
+                };
+                if save_err.is_some() {
+                    match wireguard_manager::ConfigDir::open_default()
+                        .and_then(|dir| dir.save_config(&config, true))
+                    {
+                        Ok(_) => save_err = None,
+                        Err(e) => save_err = Some(e.to_string()),
                     }
+                }
+                if let Some(err) = save_err {
+                    let msg = format!("Unable to save configuration:\n\n{err}");
+                    show_dialog_message(
+                        self.hwnd,
+                        &msg,
+                        "Unable to save configuration",
+                        MB_OK | MB_ICONERROR,
+                    );
+                    return;
                 }
 
                 self.result_config = Some(config);
@@ -851,6 +872,11 @@ pub fn run_edit_dialog(
     while !state.is_closed {
         let ret = unsafe { GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
         if ret <= 0 {
+            if ret == 0 {
+                unsafe {
+                    PostQuitMessage(msg.wParam as i32);
+                }
+            }
             break;
         }
 

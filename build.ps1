@@ -27,10 +27,67 @@ if (-not (Test-Path $targetDir)) {
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 }
 & icacls.exe $toolsDir /setintegritylevel Medium | Out-Null
-& icacls.exe $localTmpDir /setintegritylevel Medium /T /C | Out-Null
-& icacls.exe $targetDir /setintegritylevel Medium /T /C | Out-Null
+& icacls.exe $localTmpDir /setintegritylevel Medium | Out-Null
+& icacls.exe $targetDir /setintegritylevel Medium | Out-Null
 $env:TEMP = $localTmpDir
 $env:TMP = $localTmpDir
+
+# Configure multi-threaded downloads and builds globally
+$cpuCores = [System.Environment]::ProcessorCount
+if (-not $cpuCores -or $cpuCores -lt 1) { $cpuCores = 4 }
+$codegenUnits = [Math]::Max($cpuCores, 16)
+$env:CARGO_BUILD_JOBS = "$cpuCores"
+$env:CARGO_HTTP_MULTIPLEXING = "true"
+$env:CARGO_REGISTRIES_CRATES_IO_PROTOCOL = "sparse"
+$env:CARGO_NET_RETRY = "3"
+$env:RUSTUP_CONCURRENT_DOWNLOADS = "8"
+$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "$codegenUnits"
+$env:CARGO_PROFILE_RELEASE_LTO = "thin"
+
+function Invoke-ParallelDownload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable[]]$Items
+    )
+    if ($Items.Count -eq 0) { return }
+
+    $aria2 = Get-Command aria2c.exe -ErrorAction SilentlyContinue
+    if ($aria2) {
+        foreach ($item in $Items) {
+            $dir = Split-Path -Parent $item.OutFile
+            $name = Split-Path -Leaf $item.OutFile
+            & aria2c.exe -x 16 -s 16 -k 1M --file-allocation=none --allow-overwrite=true -d $dir -o $name $item.Url
+        }
+        return
+    }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        $curlArgs = @("--parallel", "--parallel-immediate", "--parallel-max", "8", "-fSL", "--retry", "3", "--retry-delay", "1")
+        foreach ($item in $Items) {
+            $curlArgs += @("-o", $item.OutFile, $item.Url)
+        }
+        & curl.exe @curlArgs
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+        Write-Host "[!] curl.exe failed (exit $LASTEXITCODE), falling back to PowerShell download..." -ForegroundColor Yellow
+    }
+
+    $ProgressPreference = 'SilentlyContinue'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    [Net.ServicePointManager]::DefaultConnectionLimit = 16
+    $jobs = foreach ($item in $Items) {
+        Start-Job -ScriptBlock {
+            param($u, $o)
+            $ProgressPreference = 'SilentlyContinue'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $u -OutFile $o
+        } -ArgumentList $item.Url, $item.OutFile
+    }
+    $jobs | Wait-Job | Receive-Job | Out-Null
+    $jobs | Remove-Job -Force | Out-Null
+}
 
 # 1. Check and configure Rust Toolchain
 Write-Host "[*] STEP 1: Checking Rust toolchain..." -ForegroundColor Yellow
@@ -53,6 +110,22 @@ if (Test-Path (Join-Path $localCargoBin "cargo.exe")) {
 }
 
 $cargoCmd = Get-Command cargo -ErrorAction SilentlyContinue
+$wgntDir = Join-Path $toolsDir "wireguard-nt"
+$wgntDllPath = Join-Path $wgntDir "bin\amd64\wireguard.dll"
+$wgntZip = Join-Path $toolsDir "wireguard-nt-1.1.zip"
+
+$downloadQueue = @()
+$rustupExe = Join-Path $toolsDir "rustup-init.exe"
+if (-not $cargoCmd -and -not (Test-Path $rustupExe)) {
+    $downloadQueue += @{ Url = "https://win.rustup.rs/x86_64"; OutFile = $rustupExe }
+}
+if (-not (Test-Path $wgntDllPath) -and -not (Test-Path $wgntZip)) {
+    $downloadQueue += @{ Url = "https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip"; OutFile = $wgntZip }
+}
+if ($downloadQueue.Count -gt 0) {
+    Write-Host "[*] Downloading $($downloadQueue.Count) package(s) in parallel..." -ForegroundColor Yellow
+    Invoke-ParallelDownload -Items $downloadQueue
+}
 
 if (-not $cargoCmd) {
     Write-Host "[!] Rust not found in PATH. Installing portable toolchain into .\tools\..." -ForegroundColor Yellow
@@ -61,11 +134,6 @@ if (-not $cargoCmd) {
     }
     $env:CARGO_HOME = $localCargoHome
     $env:RUSTUP_HOME = $localRustupHome
-    $rustupExe = Join-Path $toolsDir "rustup-init.exe"
-    if (-not (Test-Path $rustupExe)) {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $rustupExe
-    }
     
     Write-Host "[*] Installing Rust toolchain (stable-x86_64-pc-windows-msvc) into $toolsDir..." -ForegroundColor Yellow
     & $rustupExe -y --no-modify-path --default-toolchain stable --profile minimal --default-host x86_64-pc-windows-msvc
@@ -108,16 +176,13 @@ if (-not $linkCmd) {
 }
 
 # 3. Ensure WireGuardNT WHQL driver DLL is available for embedding and setup multi-threaded build
-$wgntDir = Join-Path $toolsDir "wireguard-nt"
-$wgntDllPath = Join-Path $wgntDir "bin\amd64\wireguard.dll"
 if (-not (Test-Path $wgntDllPath)) {
-    Write-Host "[*] Downloading official WireGuardNT 1.1 WHQL kernel driver package..." -ForegroundColor Yellow
+    Write-Host "[*] Extracting official WireGuardNT 1.1 WHQL kernel driver package..." -ForegroundColor Yellow
     if (-not (Test-Path $wgntDir)) {
         New-Item -ItemType Directory -Path $wgntDir -Force | Out-Null
     }
-    $wgntZip = Join-Path $toolsDir "wireguard-nt-1.1.zip"
     if (-not (Test-Path $wgntZip)) {
-        curl.exe -sSL -o $wgntZip "https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip"
+        Invoke-ParallelDownload -Items @(@{ Url = "https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip"; OutFile = $wgntZip })
     }
     tar.exe -xf $wgntZip -C $wgntDir
     if (-not (Test-Path $wgntDllPath)) {
@@ -130,11 +195,7 @@ if (Test-Path $wgntDllPath) {
     Copy-Item $wgntDllPath -Destination (Join-Path $distDir "wireguard.dll") -Force
 }
 
-$cpuCores = [System.Environment]::ProcessorCount
-if (-not $cpuCores -or $cpuCores -lt 1) { $cpuCores = 4 }
-Write-Host "[*] STEP 3: Multi-threading configured for $cpuCores CPU cores" -ForegroundColor Yellow
-
-$env:CARGO_BUILD_JOBS = "$cpuCores"
+Write-Host "[*] STEP 3: Multi-threading configured for $cpuCores CPU cores (jobs=$cpuCores, codegen-units=$codegenUnits, lto=thin, sparse+HTTP/2)" -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "===============================================================================" -ForegroundColor Cyan
@@ -214,7 +275,7 @@ if (Test-Path $exePath) {
     Copy-Item $exePath -Destination $distDir -Force
 
     # Ensure Common-Controls 6.0 & Per-Monitor DPI manifest is embedded in dist\wireguard.exe
-    $mtExe = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\mt.exe"
+    $mtExe = if ($rcExe -and (Test-Path $rcExe)) { Join-Path (Split-Path -Parent $rcExe) "mt.exe" } else { "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\mt.exe" }
     $manifestXml = Join-Path $projectRoot "manifest.xml"
     if ((Test-Path $mtExe) -and (Test-Path $manifestXml)) {
         & $mtExe -nologo -manifest $manifestXml "-outputresource:${targetExe};#1" | Out-Null

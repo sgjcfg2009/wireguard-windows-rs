@@ -432,11 +432,15 @@ impl ConfigDirManager {
         }
 
         // Serialize to wg-quick format
-        let conf_text = wireguard_conf::to_wg_quick(config);
-        let conf_bytes = conf_text.as_bytes();
+        let mut conf_text = wireguard_conf::to_wg_quick(config);
 
         // Encrypt using DPAPI with tunnel name as description
-        let encrypted_bytes = wireguard_dpapi::encrypt(conf_bytes, Some(&config.name))?;
+        let encrypted_res = wireguard_dpapi::encrypt(conf_text.as_bytes(), Some(&config.name));
+        // SAFETY: writing NUL bytes preserves valid UTF-8 before drop.
+        unsafe {
+            wireguard_dpapi::secure_zero(conf_text.as_bytes_mut());
+        }
+        let encrypted_bytes = encrypted_res?;
 
         // Write locked-down atomic file
         Self::write_locked_down_file(&destination, overwrite, &encrypted_bytes)?;
@@ -465,16 +469,17 @@ impl ConfigDirManager {
             )));
         };
 
-        let decrypted_bytes = if is_encrypted {
+        let mut decrypted_bytes = if is_encrypted {
             wireguard_dpapi::decrypt_with_expected_description(&bytes, tunnel_name)?
         } else {
             bytes
         };
 
         let conf = wireguard_conf::parse_config_bytes(&decrypted_bytes, tunnel_name)
-            .map_err(|e| ManagerError::ConfigParse(e.to_string()))?;
+            .map_err(|e| ManagerError::ConfigParse(e.to_string()));
+        wireguard_dpapi::secure_zero(&mut decrypted_bytes);
 
-        Ok(conf)
+        conf
     }
 
     /// Deletes a configuration file from disk.

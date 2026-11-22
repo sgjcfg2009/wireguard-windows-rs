@@ -230,6 +230,9 @@ pub struct ManageTunnelsWindow {
     pub tray: Option<crate::tray::Tray>,
     /// Shared Segoe UI font handle for native typography.
     pub hfont: HFONT,
+    /// Window big/small logo icons kept alive for `WM_SETICON` without leaking `HICON` handles.
+    icon_big: Option<crate::icons::SafeIcon>,
+    icon_small: Option<crate::icons::SafeIcon>,
     /// Flag indicating whether closing the window hides to tray instead of exiting.
     pub tray_active: bool,
     /// Tracks whether the conditional Log-tab Win32 timer is currently armed.
@@ -262,6 +265,8 @@ impl ManageTunnelsWindow {
             child_pages: Vec::new(),
             tray: None,
             hfont: ptr::null_mut(),
+            icon_big: None,
+            icon_small: None,
             tray_active: true,
             log_timer_active: false,
             last_tunnels_visible: false,
@@ -622,9 +627,10 @@ impl ManageTunnelsWindow {
                     hwnd,
                     WM_SETICON,
                     ICON_BIG as WPARAM,
-                    logo32.into_raw() as LPARAM,
+                    logo32.handle() as LPARAM,
                 );
             }
+            self.icon_big = Some(logo32);
         }
         if let Ok(logo16) = crate::icons::create_logo_icon(16) {
             unsafe {
@@ -632,9 +638,10 @@ impl ManageTunnelsWindow {
                     hwnd,
                     WM_SETICON,
                     ICON_SMALL as WPARAM,
-                    logo16.into_raw() as LPARAM,
+                    logo16.handle() as LPARAM,
                 );
             }
+            self.icon_small = Some(logo16);
         }
 
         // 11. Allow UIPI cross-process activation for `WM_RAISE_MSG`
@@ -1041,6 +1048,8 @@ impl ManageTunnelsWindow {
             }
             self.hfont = ptr::null_mut();
         }
+        self.icon_big = None;
+        self.icon_small = None;
     }
 }
 
